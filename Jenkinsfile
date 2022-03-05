@@ -3,12 +3,15 @@ podTemplate(yaml: '''
     kind: Pod
     spec:
       containers:
-      - name: maven
-        image: maven:3.8.1-jdk-8
+      - name: gradle
+        image: gradle:6.3-jdk14
         command:
         - sleep
         args:
         - 99d
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt        
       - name: kaniko
         image: gcr.io/kaniko-project/executor:debug
         command:
@@ -16,10 +19,15 @@ podTemplate(yaml: '''
         args:
         - 9999999
         volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt
         - name: kaniko-secret
           mountPath: /kaniko/.docker
       restartPolicy: Never
       volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: jenkins-pv-claim
       - name: kaniko-secret
         secret:
             secretName: dockercred
@@ -28,12 +36,16 @@ podTemplate(yaml: '''
               path: config.json
 ''') {
   node(POD_LABEL) {
-    stage('Get a Maven project') {
-      git url: 'https://github.com/scriptcamp/kubernetes-kaniko.git', branch: 'main'
-      container('maven') {
-        stage('Build a Maven project') {
+    stage('Build a gradle project') {
+      git 'https://github.com/dlambrig/Continuous-Delivery-with-Docker-and-Jenkins-Second-Edition.git'
+      container('gradle') {
+        stage('Build a gradle project') {
           sh '''
-          echo pwd
+          cd /home/jenkins/agent/workspace/week7/Chapter08/sample1
+          sed -i '4 a /** Main app */' /home/jenkins/agent/workspace/week7/Chapter08/sample1/src/main/java/com/leszko/calculator/Calculator.java
+          chmod +x gradlew
+          ./gradlew build
+          mv ./build/libs/calculator-0.0.1-SNAPSHOT.jar /mnt
           '''
         }
       }
@@ -41,9 +53,14 @@ podTemplate(yaml: '''
 
     stage('Build Java Image') {
       container('kaniko') {
-        stage('Build a Go project') {
+        stage('Build a container') {
           sh '''
-            /kaniko/executor --context `pwd` --destination bibinwilson/hello-kaniko:1.0
+          echo 'FROM openjdk:8-jre' > Dockerfile
+          echo 'COPY ./calculator-0.0.1-SNAPSHOT.jar app.jar' >> Dockerfile
+          echo 'ENTRYPOINT ["java", "-jar", "app.jar"]' >> Dockerfile
+          ls /mnt/*jar
+          mv /mnt/calculator-0.0.1-SNAPSHOT.jar .
+          /kaniko/executor --context `pwd` --destination dlambrig/hello-kaniko:1.0
           '''
         }
       }
